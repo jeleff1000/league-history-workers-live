@@ -25,6 +25,10 @@ on:
         description: 'Optional current-season platform league id/key for one db_name'
         required: false
         type: string
+      dispatch_token:
+        description: 'Opaque status claim token supplied by the product route'
+        required: false
+        type: string
       execute:
         description: 'Apply changed/missing draft updates'
         required: true
@@ -111,6 +115,7 @@ jobs:
       YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
       YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
       CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
+      REVALIDATION_SECRET: ${{ secrets.REVALIDATION_SECRET }}
       OPS_CACHE_PATH: ${{ github.workspace }}/research_public_lake/ops_cache.duckdb
 
     steps:
@@ -171,6 +176,7 @@ jobs:
           DB_NAMES: ${{ inputs.db_names }}
           DRAFT_YEAR: ${{ inputs.draft_year }}
           LEAGUE_ID: ${{ inputs.league_id }}
+          DISPATCH_TOKEN: ${{ inputs.dispatch_token }}
           EXECUTE: ${{ inputs.execute }}
           FORCE: ${{ inputs.force }}
           ALLOW_INCOMPLETE_DRAFT: ${{ inputs.allow_incomplete_draft }}
@@ -192,11 +198,17 @@ jobs:
           if [ -n "${LEAGUE_ID}" ]; then
             args+=(--league-id "${LEAGUE_ID}")
           fi
+          if [ -n "${DISPATCH_TOKEN}" ]; then
+            args+=(--dispatch-token "${DISPATCH_TOKEN}")
+          fi
           if [ -n "${LIMIT}" ]; then
             args+=(--limit "${LIMIT}")
           fi
           if [ "${EXECUTE}" = "true" ]; then
             args+=(--execute)
+            if [ -n "${DB_NAMES}" ] && [ -n "${DISPATCH_TOKEN}" ]; then
+              args+=(--track-dispatch --revalidate-cache)
+            fi
           fi
           if [ "${FORCE}" = "true" ]; then
             args+=(--force)
