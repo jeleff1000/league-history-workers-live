@@ -32,6 +32,18 @@ ALL_AGGREGATES = (
     "player_bio",
 )
 
+# NFLverse schedule IDs use modern abbreviations while the historical table
+# retains Stathead-era codes in its canonical team/opponent identity.
+_NFLVERSE_TO_STATHEAD_TEAM = {
+    "GB": "GNB",
+    "KC": "KAN",
+    "LA": "LAR",
+    "NO": "NOR",
+    "NE": "NWE",
+    "SF": "SFO",
+    "TB": "TAM",
+}
+
 
 def _normalized_scope(scope: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -67,6 +79,25 @@ def _weekly_filter(scope: dict[str, Any], *, alias: str = "") -> str:
     )
 
 
+def _historical_team_code(value: object) -> str:
+    code = str(value).strip().upper()
+    return _NFLVERSE_TO_STATHEAD_TEAM.get(code, code)
+
+
+def _expected_game_pairs(game_ids: list[str]) -> set[tuple[str, str]]:
+    """Expand NFLverse game IDs to the SuperTable's directed team-pair key."""
+    pairs: set[tuple[str, str]] = set()
+    for game_id in game_ids:
+        pieces = game_id.split("_")
+        if len(pieces) < 4 or not pieces[-2] or not pieces[-1]:
+            raise FlyReceiptError(f"invalid finalized NFLverse game ID: {game_id!r}")
+        away_team = _historical_team_code(pieces[-2])
+        home_team = _historical_team_code(pieces[-1])
+        pairs.add((away_team, home_team))
+        pairs.add((home_team, away_team))
+    return pairs
+
+
 def _read_single(reader: Any, sql: str) -> dict[str, Any]:
     rows = reader.query(sql, database="___ops")
     if len(rows) != 1:
@@ -97,26 +128,30 @@ def collect_fly_receipt(reader: Any, scope: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalized_scope(scope)
     weekly_rows = reader.query(
         f"""
-        SELECT game_id, COUNT(*) AS rows
+        SELECT nfl_team, opponent_nfl_team, COUNT(*) AS rows
         FROM nfl_historical."nfl_player_stats_all"
         WHERE {_weekly_filter(normalized)}
-        GROUP BY game_id
-        ORDER BY game_id
+        GROUP BY nfl_team, opponent_nfl_team
+        ORDER BY nfl_team, opponent_nfl_team
         """,
         database="___ops",
     )
-    observed_game_rows = {
-        str(row.get("game_id", "")).strip(): int(row.get("rows") or 0)
+    observed_pair_rows = {
+        (
+            _historical_team_code(row.get("nfl_team", "")),
+            _historical_team_code(row.get("opponent_nfl_team", "")),
+        ): int(row.get("rows") or 0)
         for row in weekly_rows
-        if str(row.get("game_id", "")).strip()
+        if str(row.get("nfl_team", "")).strip() and str(row.get("opponent_nfl_team", "")).strip()
     }
-    if set(observed_game_rows) != set(normalized["game_ids"]):
+    expected_pairs = _expected_game_pairs(normalized["game_ids"])
+    if set(observed_pair_rows) != expected_pairs:
         raise FlyReceiptError(
-            "Fly weekly game IDs do not exactly match the finalized refresh scope: "
-            f"expected={normalized['game_ids']}, observed={sorted(observed_game_rows)}"
+            "Fly weekly team/opponent pairs do not exactly match the finalized game IDs: "
+            f"expected={sorted(expected_pairs)}, observed={sorted(observed_pair_rows)}"
         )
-    if any(rows <= 0 for rows in observed_game_rows.values()):
-        raise FlyReceiptError("Fly weekly receipt includes a finalized game with zero player rows")
+    if any(rows <= 0 for rows in observed_pair_rows.values()):
+        raise FlyReceiptError("Fly weekly receipt includes a finalized team/opponent pair with zero player rows")
 
     aggregates: dict[str, dict[str, int]] = {}
     for table in ALL_AGGREGATES:
@@ -136,8 +171,8 @@ def collect_fly_receipt(reader: Any, scope: dict[str, Any]) -> dict[str, Any]:
     return {
         "scope": normalized,
         "weekly": {
-            "game_ids": sorted(observed_game_rows),
-            "rows": sum(observed_game_rows.values()),
+            "game_ids": normalized["game_ids"],
+            "rows": sum(observed_pair_rows.values()),
         },
         "aggregates": aggregates,
         "verified_at": datetime.now(timezone.utc).isoformat(),

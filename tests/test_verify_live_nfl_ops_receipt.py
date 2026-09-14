@@ -24,11 +24,16 @@ class _Reader:
 
     def query(self, sql: str, *, database: str):
         self.calls.append((sql, database))
-        if 'FROM nfl_historical."nfl_player_stats_all"' in sql and "GROUP BY game_id" in sql:
-            rows = [{"game_id": "2026_01_DAL_NYG", "rows": 44}]
+        if 'FROM nfl_historical."nfl_player_stats_all"' in sql and "GROUP BY nfl_team, opponent_nfl_team" in sql:
+            rows = [
+                {"nfl_team": "CHI", "opponent_nfl_team": "DET", "rows": 21},
+                {"nfl_team": "DET", "opponent_nfl_team": "CHI", "rows": 20},
+                {"nfl_team": "DAL", "opponent_nfl_team": "NYG", "rows": 22},
+                {"nfl_team": "NYG", "opponent_nfl_team": "DAL", "rows": 22},
+            ]
             if not self.missing_game:
-                rows.insert(0, {"game_id": "2026_01_CHI_DET", "rows": 41})
-            return rows
+                return rows
+            return rows[:2]
         for table in (
             "player_nfl_season",
             "player_nfl_season_all",
