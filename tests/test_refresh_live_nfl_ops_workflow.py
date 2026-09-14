@@ -17,8 +17,11 @@ def test_live_nfl_ops_workflow_schedules_the_safe_eastern_window_and_no_downstre
     assert triggers["repository_dispatch"] == {"types": ["live-nfl-ops-refresh"]}
     assert triggers["schedule"] == [
         {"cron": "17 6 * 9,10 *"},
+        {"cron": "47 6 * 9,10 *"},
         {"cron": "17 7 * 11,12 *"},
+        {"cron": "47 7 * 11,12 *"},
         {"cron": "17 7 * 1,2 *"},
+        {"cron": "47 7 * 1,2 *"},
     ]
     assert "push" not in triggers
     assert "workflow_run" not in triggers
@@ -36,6 +39,7 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     assert steps[0]["name"] == "Checkout live refresh worker"
     assert steps[0]["uses"] == "actions/checkout@v5"
     assert "scripts/live_nfl_ops_dispatch_gate.py" in steps[0]["with"]["sparse-checkout"]
+    assert "scripts/live_nfl_ops_recovery_gate.py" in steps[0]["with"]["sparse-checkout"]
     assert "scripts/verify_live_nfl_ops_receipt.py" in steps[0]["with"]["sparse-checkout"]
     assert steps[1]["name"] == "Authorize dispatched refresh in the Eastern window"
     assert "discover_live_nfl_ops_refresh.py" in text
@@ -52,10 +56,10 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
         "${{ steps.boundary.outputs.should_run == 'true' }}"
     )
     assert steps_by_name["Reconstruct and verify the durable baseline"]["if"] == (
-        "${{ steps.scope.outputs.should_refresh == 'true' }}"
+        "${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' }}"
     )
     assert steps_by_name["Build and verify the local eight-table candidate"]["if"] == (
-        "${{ steps.scope.outputs.should_refresh == 'true' }}"
+        "${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' }}"
     )
     assert "steps.scope.outputs.should_refresh == 'true'" in steps_by_name[
         "Publish the verified candidate as the next durable baseline"
@@ -63,13 +67,26 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     assert "steps.scope.outputs.should_refresh == 'true'" in steps_by_name[
         "Atomically promote the verified ops artifact"
     ]["if"]
-    assert "github.event_name == 'repository_dispatch'" in steps_by_name[
-        "Atomically promote the verified ops artifact"
-    ]["if"]
+    for step_name in (
+        "Publish the verified candidate as the next durable baseline",
+        "Atomically promote the verified ops artifact",
+        "Verify promoted Fly receipt",
+        "Publish completed refresh receipt",
+    ):
+        assert "steps.scope.outputs.should_refresh == 'true'" in steps_by_name[step_name]["if"]
+        assert "steps.recovery.outputs.should_refresh == 'true'" in steps_by_name[step_name]["if"]
+        assert "github.event_name == 'schedule'" in steps_by_name[step_name]["if"]
+        assert "github.event_name == 'repository_dispatch'" in steps_by_name[step_name]["if"]
     assert "Verify promoted Fly receipt" in steps_by_name
     assert "scripts/verify_live_nfl_ops_receipt.py" in text
     assert "python scripts/verify_live_nfl_ops_receipt.py" in text
     assert "output/ops_nfl.fly-receipt.json" in text
+    assert "Protect the recovery attempt with the completed refresh receipt" in steps_by_name
+    assert "Publish completed refresh receipt" in steps_by_name
+    assert "ops_nfl.completed-refresh.json" in text
+    assert "steps.recovery.outputs.should_refresh == 'true'" in steps_by_name[
+        "Reconstruct and verify the durable baseline"
+    ]["if"]
 
 
 def test_dispatch_gate_admits_manual_runs_and_only_the_0130_to_0500_et_dispatch_window():

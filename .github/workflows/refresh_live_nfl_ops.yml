@@ -8,13 +8,17 @@ run-name: >-
 # passes its receipt and schema gates.
 on:
   # Stagger off the top of the UTC hour to reduce GitHub scheduler delay while
-  # retaining a 02:17 America/New_York run: after even a long OT finale, and
-  # before the 05:00 ET morning deadline. The scope gate exits before artifact
-  # or Fly work whenever the prior date has no final game.
+  # retaining a 02:17 America/New_York primary and a guarded 03:47 recovery:
+  # after even a long OT finale, and before the 05:00 ET morning deadline. The
+  # scope gate exits before artifact or Fly work whenever the prior date has no
+  # final game; the recovery receipt prevents a second successful refresh.
   schedule:
     - cron: "17 6 * 9,10 *" # 02:17 EDT
+    - cron: "47 6 * 9,10 *" # 03:47 EDT recovery
     - cron: "17 7 * 11,12 *" # 02:17 EST
+    - cron: "47 7 * 11,12 *" # 03:47 EST recovery
     - cron: "17 7 * 1,2 *" # 02:17 EST, 2027 postseason
+    - cron: "47 7 * 1,2 *" # 03:47 EST, 2027 postseason recovery
   # The dedicated dispatch remains available for controlled scheduling and
   # recovery. GitHub Actions is the only process that builds or writes Ops.
   repository_dispatch:
@@ -82,6 +86,7 @@ jobs:
         with:
           sparse-checkout: |
             scripts/live_nfl_ops_dispatch_gate.py
+            scripts/live_nfl_ops_recovery_gate.py
             scripts/verify_live_nfl_ops_receipt.py
           sparse-checkout-cone-mode: false
 
@@ -187,8 +192,38 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Reconstruct and verify the durable baseline
+      - name: Restore completed refresh receipt
         if: ${{ steps.scope.outputs.should_refresh == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p completion
+          asset_id=$(gh api "repos/$OPS_REPOSITORY/releases/tags/$BASELINE_RELEASE_TAG" \
+            --jq '.assets[] | select(.name == "ops_nfl.completed-refresh.json") | .id')
+          if [[ -n "$asset_id" ]]; then
+            gh release download "$BASELINE_RELEASE_TAG" \
+              --repo "$OPS_REPOSITORY" \
+              --pattern 'ops_nfl.completed-refresh.json' \
+              --dir completion
+          fi
+
+      - name: Protect the recovery attempt with the completed refresh receipt
+        id: recovery
+        if: ${{ steps.scope.outputs.should_refresh == 'true' }}
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule || '' }}
+        run: |
+          python scripts/live_nfl_ops_recovery_gate.py \
+            --event "$EVENT_NAME" \
+            --schedule "$EVENT_SCHEDULE" \
+            --scope code/refresh_scope.json \
+            --receipt completion/ops_nfl.completed-refresh.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Reconstruct and verify the durable baseline
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -217,7 +252,7 @@ jobs:
           rm -rf parts
 
       - name: Build and verify the local eight-table candidate
-        if: ${{ steps.scope.outputs.should_refresh == 'true' }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' }}
         working-directory: code
         env:
           PYTHONPATH: ${{ github.workspace }}/code/fantasy_football_data_scripts
@@ -238,7 +273,7 @@ jobs:
           python scripts/refresh_live_nfl_ops.py "${refresh_args[@]}"
 
       - name: Publish the verified candidate as the next durable baseline
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' && (github.event_name == 'schedule' || github.event_name == 'repository_dispatch' || inputs.apply) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -264,7 +299,7 @@ jobs:
             publish/ops_nfl.duckdb.sha256 --repo "$OPS_REPOSITORY"
 
       - name: Atomically promote the verified ops artifact
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' && (github.event_name == 'schedule' || github.event_name == 'repository_dispatch' || inputs.apply) }}
         working-directory: code
         env:
           PYTHONPATH: ${{ github.workspace }}/code:${{ github.workspace }}/code/fantasy_football_data_scripts
@@ -295,7 +330,7 @@ jobs:
           PY
 
       - name: Verify promoted Fly receipt
-        if: ${{ steps.scope.outputs.should_refresh == 'true' && (github.event_name == 'repository_dispatch' || inputs.apply) }}
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' && (github.event_name == 'schedule' || github.event_name == 'repository_dispatch' || inputs.apply) }}
         env:
           PYTHONPATH: ${{ github.workspace }}/code:${{ github.workspace }}/code/fantasy_football_data_scripts
           DATABASE_BACKEND: fly
@@ -306,6 +341,28 @@ jobs:
           python scripts/verify_live_nfl_ops_receipt.py \
             --scope code/refresh_scope.json \
             --output output/ops_nfl.fly-receipt.json
+
+      - name: Publish completed refresh receipt
+        if: ${{ steps.scope.outputs.should_refresh == 'true' && steps.recovery.outputs.should_refresh == 'true' && (github.event_name == 'schedule' || github.event_name == 'repository_dispatch' || inputs.apply) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg completed_at "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
+            --slurpfile scope code/refresh_scope.json \
+            --slurpfile fly_receipt output/ops_nfl.fly-receipt.json \
+            '{
+              status: "completed",
+              run_id: $run_id,
+              completed_at: $completed_at,
+              scope: $scope[0].scope,
+              fly_receipt: $fly_receipt[0]
+            }' > completion/ops_nfl.completed-refresh.json
+          gh release upload "$BASELINE_RELEASE_TAG" \
+            completion/ops_nfl.completed-refresh.json \
+            --clobber \
+            --repo "$OPS_REPOSITORY"
 
       - name: Upload the local validation receipt
         if: ${{ always() && steps.scope.outputs.should_refresh == 'true' }}
