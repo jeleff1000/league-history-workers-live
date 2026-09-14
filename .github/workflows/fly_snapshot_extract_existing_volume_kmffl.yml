@@ -1,0 +1,78 @@
+name: Fly Snapshot Extract Existing Volume KMFFL
+
+on:
+  workflow_dispatch:
+    inputs:
+      volume_id:
+        description: Restored, unattached recovery volume ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
+      RECOVERY_APP: league-history-duckdb
+      RECOVERY_REGION: iad
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install flyctl
+        run: |
+          curl -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Start isolated recovery machine
+        id: machine
+        run: |
+          IMAGE=$(flyctl machines list --app "$RECOVERY_APP" --json | jq -r --arg id "$FLY_PRIMARY_MACHINE_ID" '.[] | select(.id == $id) | .config.image')
+          NAME="kmffl-existing-${GITHUB_RUN_ID}"
+          jq -n --arg name "$NAME" --arg region "$RECOVERY_REGION" --arg image "$IMAGE" --arg volume "${{ inputs.volume_id }}" \
+            '{name:$name,region:$region,config:{image:$image,guest:{cpu_kind:"shared",cpus:1,memory_mb:1024},mounts:[{volume:$volume,path:"/data"}],init:{exec:["/bin/sleep","3600"]},restart:{policy:"no"},services:[]}}' \
+            > request.json
+          curl --fail-with-body --silent --show-error -X POST \
+            "https://api.machines.dev/v1/apps/${RECOVERY_APP}/machines" \
+            -H "Authorization: Bearer ${FLY_API_TOKEN}" -H "Content-Type: application/json" \
+            --data-binary @request.json > machine.json
+          MACHINE_ID=$(jq -r '.id' machine.json)
+          echo "id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
+          for attempt in $(seq 1 60); do
+            STATE=$(flyctl machines list --app "$RECOVERY_APP" --json | jq -r --arg id "$MACHINE_ID" '.[] | select(.id == $id) | .state')
+            echo "recovery machine state: ${STATE:-missing}"
+            [ "$STATE" = "started" ] && exit 0
+            curl --silent --show-error --max-time 30 -X POST \
+              "https://api.machines.dev/v1/apps/${RECOVERY_APP}/machines/${MACHINE_ID}/start" \
+              -H "Authorization: Bearer ${FLY_API_TOKEN}" || true
+            sleep 10
+          done
+          exit 1
+
+      - name: Extract archive years
+        run: |
+          flyctl ssh sftp put scripts/recover_kmffl_snapshot.py /tmp/recover_kmffl_snapshot.py \
+            --app "$RECOVERY_APP" --machine "${{ steps.machine.outputs.id }}"
+          flyctl ssh console --app "$RECOVERY_APP" --machine "${{ steps.machine.outputs.id }}" \
+            -C "python /tmp/recover_kmffl_snapshot.py"
+          flyctl ssh sftp get /tmp/kmffl_archive.duckdb ./kmffl_archive.duckdb \
+            --app "$RECOVERY_APP" --machine "${{ steps.machine.outputs.id }}"
+
+      - name: Upload private recovery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kmffl-archive-2013-2014
+          path: kmffl_archive.duckdb
+          retention-days: 1
+
+      - name: Destroy recovery machine
+        if: always() && steps.machine.outputs.id != ''
+        run: flyctl machine destroy "${{ steps.machine.outputs.id }}" --app "$RECOVERY_APP" --force
+
+      - name: Destroy recovery volume
+        if: always()
+        run: flyctl volumes destroy "${{ inputs.volume_id }}" --app "$RECOVERY_APP" --yes
