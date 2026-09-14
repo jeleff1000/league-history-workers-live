@@ -40,7 +40,7 @@ concurrency:
 jobs:
   yahoo-active-season-refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 15
 
     env:
       PYTHONUNBUFFERED: 1
