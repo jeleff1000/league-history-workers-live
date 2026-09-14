@@ -44,19 +44,23 @@ jobs:
       - name: Start isolated recovery machine
         id: machine
         run: |
-          IMAGE=$(flyctl machine status "$FLY_PRIMARY_MACHINE_ID" --app "$RECOVERY_APP" --json | jq -r '.config.image')
+          IMAGE=$(flyctl machines list --app "$RECOVERY_APP" --json | jq -r --arg id "$FLY_PRIMARY_MACHINE_ID" '.[] | select(.id == $id) | .config.image')
+          NAME="kmffl-recovery-${GITHUB_RUN_ID}"
+          test -n "$IMAGE"
           flyctl machine run "$IMAGE" 3600 \
             --app "$RECOVERY_APP" \
             --region "$RECOVERY_REGION" \
             --volume "${{ steps.volume.outputs.id }}:/data" \
             --entrypoint /bin/sleep \
-            --name "kmffl-recovery-${GITHUB_RUN_ID}" \
+            --name "$NAME" \
             --vm-cpus 2 \
             --vm-memory 4096 \
             --skip-dns-registration \
             --file-local /tmp/recover_kmffl_snapshot.py=scripts/recover_kmffl_snapshot.py \
-            --detach --json > recovery-machine.json
-          echo "id=$(jq -r '.id' recovery-machine.json)" >> "$GITHUB_OUTPUT"
+            --detach
+          MACHINE_ID=$(flyctl machines list --app "$RECOVERY_APP" --json | jq -r --arg name "$NAME" '.[] | select(.name == $name) | .id')
+          test -n "$MACHINE_ID"
+          echo "id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Extract archive years
         run: |
