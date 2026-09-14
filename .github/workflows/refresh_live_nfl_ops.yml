@@ -296,7 +296,7 @@ jobs:
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
         run: |
           set -euo pipefail
-          python scripts/verify_live_nfl_ops_receipt.py \
+          python code/scripts/verify_live_nfl_ops_receipt.py \
             --scope code/refresh_scope.json \
             --output output/ops_nfl.fly-receipt.json
 
