@@ -1,0 +1,81 @@
+name: Fly Snapshot Extract KMFFL
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_id:
+        description: Fly volume snapshot ID from before the repair
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_PRIMARY_MACHINE_ID: ${{ secrets.FLY_PRIMARY_MACHINE_ID }}
+      RECOVERY_APP: league-history-duckdb
+      RECOVERY_REGION: iad
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install flyctl
+        run: |
+          curl -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Restore isolated snapshot volume
+        id: volume
+        run: |
+          flyctl volumes create kmffl_snapshot_recovery \
+            --app "$RECOVERY_APP" \
+            --region "$RECOVERY_REGION" \
+            --size 50 \
+            --snapshot-id "${{ inputs.snapshot_id }}" \
+            --require-unique-zone=false \
+            --scheduled-snapshots=false \
+            --yes --json > recovery-volume.json
+          echo "id=$(jq -r '.id' recovery-volume.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Start isolated recovery machine
+        id: machine
+        run: |
+          IMAGE=$(flyctl machine status "$FLY_PRIMARY_MACHINE_ID" --app "$RECOVERY_APP" --json | jq -r '.config.image')
+          flyctl machine run "$IMAGE" 3600 \
+            --app "$RECOVERY_APP" \
+            --region "$RECOVERY_REGION" \
+            --volume "${{ steps.volume.outputs.id }}:/data" \
+            --entrypoint /bin/sleep \
+            --name "kmffl-recovery-${GITHUB_RUN_ID}" \
+            --vm-cpus 2 \
+            --vm-memory 4096 \
+            --skip-dns-registration \
+            --file-local /tmp/recover_kmffl_snapshot.py=scripts/recover_kmffl_snapshot.py \
+            --detach --json > recovery-machine.json
+          echo "id=$(jq -r '.id' recovery-machine.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Extract archive years
+        run: |
+          flyctl ssh console --app "$RECOVERY_APP" --machine "${{ steps.machine.outputs.id }}" \
+            -C "python /tmp/recover_kmffl_snapshot.py"
+          flyctl ssh sftp get /tmp/kmffl_archive.duckdb ./kmffl_archive.duckdb \
+            --app "$RECOVERY_APP" --machine "${{ steps.machine.outputs.id }}"
+
+      - name: Upload private recovery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kmffl-archive-2013-2014
+          path: kmffl_archive.duckdb
+          retention-days: 1
+
+      - name: Destroy recovery machine
+        if: always() && steps.machine.outputs.id != ''
+        run: flyctl machine destroy "${{ steps.machine.outputs.id }}" --app "$RECOVERY_APP" --force
+
+      - name: Destroy recovery volume
+        if: always() && steps.volume.outputs.id != ''
+        run: flyctl volumes destroy "${{ steps.volume.outputs.id }}" --app "$RECOVERY_APP" --yes
