@@ -127,11 +127,17 @@ jobs:
           DISPATCH_GAME_DATE: ${{ github.event.client_payload.game_date || '' }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+          if [[ "$EVENT_NAME" == "repository_dispatch" || "$EVENT_NAME" == "schedule" || -n "$MANUAL_GAME_DATE" ]]; then
             default_game_date=$(TZ=America/New_York date --date=yesterday +%F)
-            game_date="${DISPATCH_GAME_DATE:-$default_game_date}"
+            if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+              game_date="${DISPATCH_GAME_DATE:-$default_game_date}"
+            elif [[ -n "$MANUAL_GAME_DATE" ]]; then
+              game_date="$MANUAL_GAME_DATE"
+            else
+              game_date="$default_game_date"
+            fi
             python scripts/discover_live_nfl_ops_refresh.py \
-              --season 2026 \
+              --season "$MANUAL_YEAR" \
               --game-date "$game_date" \
               --output refresh_scope.json
           else

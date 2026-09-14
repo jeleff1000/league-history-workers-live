@@ -42,6 +42,10 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     assert "Authorize dispatched refresh in the Eastern window" in text
     assert "scripts/live_nfl_ops_dispatch_gate.py" in text
     assert "game_date=$(TZ=America/New_York date --date=yesterday +%F)" in text
+    assert (
+        'if [[ "$EVENT_NAME" == "repository_dispatch" || "$EVENT_NAME" == "schedule" || '
+        '-n "$MANUAL_GAME_DATE" ]]'
+    ) in text
     assert "___leagues" not in text
     assert "repository_dispatch" in text
     assert steps_by_name["Resolve final live refresh scope"]["if"] == (
