@@ -82,6 +82,7 @@ jobs:
         with:
           sparse-checkout: |
             scripts/live_nfl_ops_dispatch_gate.py
+            scripts/verify_live_nfl_ops_receipt.py
           sparse-checkout-cone-mode: false
 
       - name: Authorize dispatched refresh in the Eastern window
@@ -296,7 +297,7 @@ jobs:
           DATABASE_READ_TOKEN: ${{ secrets.DATABASE_READ_TOKEN }}
         run: |
           set -euo pipefail
-          python code/scripts/verify_live_nfl_ops_receipt.py \
+          python scripts/verify_live_nfl_ops_receipt.py \
             --scope code/refresh_scope.json \
             --output output/ops_nfl.fly-receipt.json
 

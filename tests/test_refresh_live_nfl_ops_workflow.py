@@ -35,6 +35,8 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     # the authorization step executes on a hosted runner.
     assert steps[0]["name"] == "Checkout live refresh worker"
     assert steps[0]["uses"] == "actions/checkout@v5"
+    assert "scripts/live_nfl_ops_dispatch_gate.py" in steps[0]["with"]["sparse-checkout"]
+    assert "scripts/verify_live_nfl_ops_receipt.py" in steps[0]["with"]["sparse-checkout"]
     assert steps[1]["name"] == "Authorize dispatched refresh in the Eastern window"
     assert "discover_live_nfl_ops_refresh.py" in text
     assert "Authorize dispatched refresh in the Eastern window" in text
@@ -62,7 +64,7 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     ]["if"]
     assert "Verify promoted Fly receipt" in steps_by_name
     assert "scripts/verify_live_nfl_ops_receipt.py" in text
-    assert "python code/scripts/verify_live_nfl_ops_receipt.py" in text
+    assert "python scripts/verify_live_nfl_ops_receipt.py" in text
     assert "output/ops_nfl.fly-receipt.json" in text
 
 
