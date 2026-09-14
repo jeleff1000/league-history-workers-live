@@ -2,7 +2,8 @@
 """Authorize a live NFL Ops worker invocation at the GitHub boundary.
 
 Manual dispatches are deliberately unrestricted so an operator can repair a
-missed final slate.  Automated repository dispatches are accepted only during
+missed final slate. Automated scheduled and repository dispatches are accepted
+only during
 the 01:30–05:00 America/New_York service window; the downstream NFLverse scope
 gate still decides whether finalized REG or POST data exists to publish.
 """
@@ -24,7 +25,7 @@ def should_run(event: str, now: datetime) -> bool:
     normalized_event = event.strip()
     if normalized_event == "workflow_dispatch":
         return True
-    if normalized_event != "repository_dispatch":
+    if normalized_event not in {"repository_dispatch", "schedule"}:
         return False
 
     eastern_now = now.astimezone(EASTERN)

@@ -7,8 +7,16 @@ run-name: >-
 # any league table. Promotion is opt-in after the local eight-table artifact
 # passes its receipt and schema gates.
 on:
-  # A dedicated timezone-aware scheduler dispatches this worker.  GitHub
-  # Actions remains the only process that builds or writes the Ops artifact.
+  # Stagger off the top of the UTC hour to reduce GitHub scheduler delay while
+  # retaining a 02:17 America/New_York run: after even a long OT finale, and
+  # before the 05:00 ET morning deadline. The scope gate exits before artifact
+  # or Fly work whenever the prior date has no final game.
+  schedule:
+    - cron: "17 6 * 9,10 *" # 02:17 EDT
+    - cron: "17 7 * 11,12 *" # 02:17 EST
+    - cron: "17 7 * 1,2 *" # 02:17 EST, 2027 postseason
+  # The dedicated dispatch remains available for controlled scheduling and
+  # recovery. GitHub Actions is the only process that builds or writes Ops.
   repository_dispatch:
     types:
       - live-nfl-ops-refresh
