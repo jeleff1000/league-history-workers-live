@@ -1,0 +1,59 @@
+name: Fly Snapshot Resume KMFFL
+
+on:
+  workflow_dispatch:
+    inputs:
+      machine_id:
+        description: Existing isolated recovery machine ID
+        required: true
+        type: string
+      volume_id:
+        description: Existing isolated recovery volume ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      RECOVERY_APP: league-history-duckdb
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install flyctl
+        run: |
+          curl -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Start restored machine
+        run: |
+          flyctl machine start "${{ inputs.machine_id }}" \
+            --app "$RECOVERY_APP" \
+            --timeout 15m
+
+      - name: Extract archive years
+        run: |
+          flyctl ssh console --app "$RECOVERY_APP" --machine "${{ inputs.machine_id }}" \
+            -C "python /tmp/recover_kmffl_snapshot.py"
+          flyctl ssh sftp get /tmp/kmffl_archive.duckdb ./kmffl_archive.duckdb \
+            --app "$RECOVERY_APP" --machine "${{ inputs.machine_id }}"
+
+      - name: Upload private recovery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kmffl-archive-2013-2014
+          path: kmffl_archive.duckdb
+          retention-days: 1
+
+      - name: Destroy recovery machine
+        if: always()
+        run: flyctl machine destroy "${{ inputs.machine_id }}" --app "$RECOVERY_APP" --force
+
+      - name: Destroy recovery volume
+        if: always()
+        run: flyctl volumes destroy "${{ inputs.volume_id }}" --app "$RECOVERY_APP" --yes
