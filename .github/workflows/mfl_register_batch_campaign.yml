@@ -488,7 +488,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mfl-register-batch-${{ matrix.batch }}
-          retention-days: 30
+          # These are same-run transport inputs for `combine`, which has a
+          # 90-minute timeout. The immutable chunk snapshot below is the
+          # durable, 90-day recovery artifact.
+          retention-days: 1
           path: |
             batch_output/*/league.duckdb
             batch_output/*/receipt.json

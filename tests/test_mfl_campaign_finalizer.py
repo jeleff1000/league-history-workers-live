@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 
 WORKFLOW = Path(__file__).parents[1] / ".github/workflows/mfl_register_batch_campaign.yml"
 
@@ -26,3 +28,13 @@ def test_fetch_only_continuation_reads_the_chunk_index():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert '"$STORAGE_MODE" = fetch_only' in text
     assert "ROOT=index_state" in text
+
+
+def test_intermediate_batch_receipts_expire_after_the_same_day_combine_window():
+    """Batch receipts are combine-job transport, while the chunk is the durable output."""
+
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["ingest"]["steps"]
+    uploads = {step["name"]: step["with"] for step in steps if "with" in step}
+
+    assert uploads["Upload batch receipts"]["retention-days"] == 1
