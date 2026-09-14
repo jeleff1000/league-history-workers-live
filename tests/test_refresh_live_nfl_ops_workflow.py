@@ -1,25 +1,24 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import yaml
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "refresh_live_nfl_ops.yml"
+GATE = Path(__file__).resolve().parents[1] / "scripts" / "live_nfl_ops_dispatch_gate.py"
 
 
-def test_live_nfl_ops_workflow_uses_an_early_github_schedule_and_no_external_dispatcher():
+def test_live_nfl_ops_workflow_accepts_only_manual_or_dedicated_scheduler_dispatches():
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     triggers = workflow[True]
 
     assert "workflow_dispatch" in triggers
-    assert triggers["schedule"] == [
-        {"cron": "30 6 * 9,10 *"},
-        {"cron": "30 7 * 11,12 *"},
-        {"cron": "30 7 * 1,2 *"},
-    ]
-    assert "repository_dispatch" not in triggers
+    assert triggers["repository_dispatch"] == {"types": ["live-nfl-ops-refresh"]}
+    assert "schedule" not in triggers
     assert "push" not in triggers
     assert "workflow_run" not in triggers
-    assert "scheduled" in workflow["run-name"]
+    assert "repository_dispatch" in workflow["run-name"]
 
 
 def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
@@ -29,11 +28,11 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     text = WORKFLOW.read_text(encoding="utf-8")
 
     assert "discover_live_nfl_ops_refresh.py" in text
-    assert "Hold scheduled refresh until 03:00 Eastern" in text
-    assert "DUE_WINDOW_MINUTES = 5" in text
+    assert "Authorize dispatched refresh in the Eastern window" in text
+    assert "scripts/live_nfl_ops_dispatch_gate.py" in text
     assert "game_date=$(TZ=America/New_York date --date=yesterday +%F)" in text
     assert "___leagues" not in text
-    assert "repository_dispatch" not in text
+    assert "repository_dispatch" in text
     assert steps_by_name["Resolve final live refresh scope"]["if"] == (
         "${{ steps.boundary.outputs.should_run == 'true' }}"
     )
@@ -49,9 +48,31 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     assert "steps.scope.outputs.should_refresh == 'true'" in steps_by_name[
         "Atomically promote the verified ops artifact"
     ]["if"]
-    assert "github.event_name == 'schedule'" in steps_by_name[
+    assert "github.event_name == 'repository_dispatch'" in steps_by_name[
         "Atomically promote the verified ops artifact"
     ]["if"]
+    assert "Verify promoted Fly receipt" in steps_by_name
+    assert "scripts/verify_live_nfl_ops_receipt.py" in text
+    assert "output/ops_nfl.fly-receipt.json" in text
+
+
+def test_dispatch_gate_admits_manual_runs_and_only_the_0130_to_0500_et_dispatch_window():
+    assert GATE.is_file(), "the workflow boundary must call a testable gate command"
+
+    def authorize(event: str, moment: str) -> str:
+        completed = subprocess.run(
+            [sys.executable, str(GATE), "--event", event, "--now", moment],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    assert authorize("workflow_dispatch", "2026-09-14T09:00:00-04:00") == "should_run=true"
+    assert authorize("repository_dispatch", "2026-09-14T01:30:00-04:00") == "should_run=true"
+    assert authorize("repository_dispatch", "2026-09-14T04:59:59-04:00") == "should_run=true"
+    assert authorize("repository_dispatch", "2026-09-14T01:29:59-04:00") == "should_run=false"
+    assert authorize("repository_dispatch", "2026-09-14T05:00:00-04:00") == "should_run=false"
 
 
 def test_durable_baseline_checksum_uses_the_reconstructed_artifact_path() -> None:
