@@ -69,6 +69,13 @@ jobs:
       OUTPUT_PATH: ${{ github.workspace }}/output/ops_nfl.duckdb
 
     steps:
+      - name: Checkout live refresh worker
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            scripts/live_nfl_ops_dispatch_gate.py
+          sparse-checkout-cone-mode: false
+
       - name: Authorize dispatched refresh in the Eastern window
         id: boundary
         shell: bash

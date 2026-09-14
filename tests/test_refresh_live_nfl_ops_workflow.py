@@ -27,6 +27,11 @@ def test_live_nfl_ops_workflow_gates_release_and_fly_on_a_ready_scope():
     steps_by_name = {step["name"]: step for step in steps}
     text = WORKFLOW.read_text(encoding="utf-8")
 
+    # The gate is a tracked worker script, so it must be available before
+    # the authorization step executes on a hosted runner.
+    assert steps[0]["name"] == "Checkout live refresh worker"
+    assert steps[0]["uses"] == "actions/checkout@v5"
+    assert steps[1]["name"] == "Authorize dispatched refresh in the Eastern window"
     assert "discover_live_nfl_ops_refresh.py" in text
     assert "Authorize dispatched refresh in the Eastern window" in text
     assert "scripts/live_nfl_ops_dispatch_gate.py" in text
