@@ -21,3 +21,10 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}
         run: flyctl volumes snapshots list "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --json
+
+      - name: List recovery resources
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl machines list --app league-history-duckdb --json
+          flyctl volumes list --app league-history-duckdb --json
