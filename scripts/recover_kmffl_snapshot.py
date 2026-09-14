@@ -27,6 +27,8 @@ def main() -> None:
 
     conn = duckdb.connect(str(OUTPUT))
     try:
+        conn.execute("SET threads = 1")
+        conn.execute("SET memory_limit = '768MB'")
         conn.execute(f"ATTACH '{SOURCE.as_posix()}' AS snapshot (READ_ONLY)")
         conn.execute("CREATE SCHEMA public")
         available = {

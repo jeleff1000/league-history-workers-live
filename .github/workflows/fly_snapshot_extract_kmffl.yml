@@ -53,8 +53,8 @@ jobs:
             --volume "${{ steps.volume.outputs.id }}:/data" \
             --entrypoint /bin/sleep \
             --name "$NAME" \
-            --vm-cpus 2 \
-            --vm-memory 4096 \
+            --vm-cpus 1 \
+            --vm-memory 1024 \
             --skip-dns-registration \
             --file-local /tmp/recover_kmffl_snapshot.py=scripts/recover_kmffl_snapshot.py \
             --detach
