@@ -47,23 +47,42 @@ jobs:
           IMAGE=$(flyctl machines list --app "$RECOVERY_APP" --json | jq -r --arg id "$FLY_PRIMARY_MACHINE_ID" '.[] | select(.id == $id) | .config.image')
           NAME="kmffl-recovery-${GITHUB_RUN_ID}"
           test -n "$IMAGE"
-          flyctl machine run "$IMAGE" 3600 \
-            --app "$RECOVERY_APP" \
-            --region "$RECOVERY_REGION" \
-            --volume "${{ steps.volume.outputs.id }}:/data" \
-            --entrypoint /bin/sleep \
-            --name "$NAME" \
-            --vm-cpus 1 \
-            --vm-memory 1024 \
-            --skip-dns-registration \
-            --file-local /tmp/recover_kmffl_snapshot.py=scripts/recover_kmffl_snapshot.py \
-            --detach
-          MACHINE_ID=$(flyctl machines list --app "$RECOVERY_APP" --json | jq -r --arg name "$NAME" '.[] | select(.name == $name) | .id')
+          jq -n \
+            --arg name "$NAME" \
+            --arg region "$RECOVERY_REGION" \
+            --arg image "$IMAGE" \
+            --arg volume "${{ steps.volume.outputs.id }}" \
+            '{name:$name,region:$region,config:{image:$image,guest:{cpu_kind:"shared",cpus:1,memory_mb:1024},mounts:[{volume:$volume,path:"/data"}],init:{exec:["/bin/sleep","3600"]},restart:{policy:"no"},services:[]}}' \
+            > recovery-machine-request.json
+          curl --fail-with-body --silent --show-error \
+            -X POST "https://api.machines.dev/v1/apps/${RECOVERY_APP}/machines" \
+            -H "Authorization: Bearer ${FLY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary @recovery-machine-request.json \
+            > recovery-machine.json
+          MACHINE_ID=$(jq -r '.id' recovery-machine.json)
           test -n "$MACHINE_ID"
           echo "id=$MACHINE_ID" >> "$GITHUB_OUTPUT"
+          for attempt in $(seq 1 90); do
+            STATE=$(flyctl machines list --app "$RECOVERY_APP" --json | jq -r --arg id "$MACHINE_ID" '.[] | select(.id == $id) | .state')
+            echo "recovery machine state: ${STATE:-missing}"
+            if [ "$STATE" = "started" ]; then
+              exit 0
+            fi
+            if [ "$STATE" = "created" ] || [ "$STATE" = "stopped" ]; then
+              curl --fail-with-body --silent --show-error --max-time 30 \
+                -X POST "https://api.machines.dev/v1/apps/${RECOVERY_APP}/machines/${MACHINE_ID}/start" \
+                -H "Authorization: Bearer ${FLY_API_TOKEN}" || true
+            fi
+            sleep 10
+          done
+          echo "Recovery machine did not start within 15 minutes" >&2
+          exit 1
 
       - name: Extract archive years
         run: |
+          flyctl ssh sftp put scripts/recover_kmffl_snapshot.py /tmp/recover_kmffl_snapshot.py \
+            --app "$RECOVERY_APP" --machine "${{ steps.machine.outputs.id }}"
           flyctl ssh console --app "$RECOVERY_APP" --machine "${{ steps.machine.outputs.id }}" \
             -C "python /tmp/recover_kmffl_snapshot.py"
           flyctl ssh sftp get /tmp/kmffl_archive.duckdb ./kmffl_archive.duckdb \
