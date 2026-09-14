@@ -1,0 +1,23 @@
+name: Fly Snapshot Inventory
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Install flyctl
+        run: |
+          curl -sL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: List primary volume snapshots
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_PRIMARY_VOLUME_ID: ${{ secrets.FLY_PRIMARY_VOLUME_ID }}
+        run: flyctl volumes snapshots list "$FLY_PRIMARY_VOLUME_ID" --app league-history-duckdb --json
