@@ -2,6 +2,11 @@ name: Fly Snapshot Inventory
 
 on:
   workflow_dispatch:
+    inputs:
+      destroy_recovery_volume_id:
+        description: Exact unattached kmffl_snapshot_recovery volume to destroy
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -15,6 +20,20 @@ jobs:
         run: |
           curl -sL https://fly.io/install.sh | sh
           echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Destroy verified orphan recovery volume
+        if: inputs.destroy_recovery_volume_id != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          VOLUME_ID: ${{ inputs.destroy_recovery_volume_id }}
+        run: |
+          test "$VOLUME_ID" = "vol_vly006jom1xx27g4"
+          flyctl volumes list --app league-history-duckdb --json > volumes.json
+          NAME=$(jq -r --arg id "$VOLUME_ID" '.[] | select(.id == $id) | .name' volumes.json)
+          ATTACHED=$(jq -r --arg id "$VOLUME_ID" '.[] | select(.id == $id) | .attached_machine_id // ""' volumes.json)
+          test "$NAME" = "kmffl_snapshot_recovery"
+          test -z "$ATTACHED"
+          flyctl volumes destroy "$VOLUME_ID" --app league-history-duckdb --yes
 
       - name: List primary volume snapshots
         env:
