@@ -34,8 +34,8 @@ def main() -> None:
         available = {
             row[0]
             for row in conn.execute(
-                "SELECT table_name FROM snapshot.information_schema.tables "
-                "WHERE table_schema = 'public'"
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_catalog = 'snapshot' AND table_schema = 'public'"
             ).fetchall()
         }
         for table in TABLES:
@@ -44,8 +44,9 @@ def main() -> None:
             columns = {
                 row[0]
                 for row in conn.execute(
-                    "SELECT column_name FROM snapshot.information_schema.columns "
-                    "WHERE table_schema = 'public' AND table_name = ?",
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_catalog = 'snapshot' AND table_schema = 'public' "
+                    "AND table_name = ?",
                     [table],
                 ).fetchall()
             }
