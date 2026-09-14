@@ -963,6 +963,25 @@ jobs:
           name: mfl-accepted-keys-${{ github.run_id }}
           retention-days: 90
           path: accepted_keys.json
+
+      - name: Purge consumed batch transport artifacts
+        # `combine` has already downloaded every batch receipt and published
+        # the durable snapshot/chunk. Do not retain the matrix transport
+        # copies in Actions storage after that point.
+        if: ${{ inputs.storage_mode == 'snapshot' || inputs.storage_mode == 'chunked' || inputs.storage_mode == 'fetch_only' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | startswith("mfl-register-batch-")) | .id' |
+          while read -r artifact_id; do
+            [ -n "$artifact_id" ] || continue
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id"
+          done
   verify_cache:
     needs: [combine]
     if: ${{ always() && needs.combine.result == 'success' }}

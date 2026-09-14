@@ -38,3 +38,16 @@ def test_intermediate_batch_receipts_expire_after_the_same_day_combine_window():
     uploads = {step["name"]: step["with"] for step in steps if "with" in step}
 
     assert uploads["Upload batch receipts"]["retention-days"] == 1
+
+
+def test_combine_removes_only_batch_transport_after_publishing_the_durable_chunk():
+    """A completed combine must reclaim its transient matrix artifacts."""
+
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["combine"]["steps"]
+    steps_by_name = {step["name"]: step for step in steps}
+    purge = steps_by_name["Purge consumed batch transport artifacts"]
+
+    assert "mfl-register-batch-" in purge["run"]
+    assert "actions/artifacts/$artifact_id" in purge["run"]
+    assert "--method DELETE" in purge["run"]
